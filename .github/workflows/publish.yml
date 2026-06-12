@@ -22,6 +22,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Must match the `environment` in the npm trusted-publisher config exactly —
+    # it becomes an OIDC claim, and a mismatch fails the token exchange (404).
+    environment: NPM Publishing
     steps:
       - uses: actions/checkout@v6
       # NOTE: deliberately no `registry-url` here. Setting it makes setup-node
