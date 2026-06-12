@@ -1,4 +1,4 @@
-# Zendesk MCP
+# Tokenless Zendesk MCP Server
 
 An MCP server for Zendesk. You sign in **once** in a real browser (Playwright) —
 any method works, including SSO and 2FA — and the resulting **session cookies are

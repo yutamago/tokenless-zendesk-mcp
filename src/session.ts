@@ -78,33 +78,49 @@ export class ZendeskSession {
 
       // Wait until we're on an authenticated agent route. Zendesk bounces
       // unauthenticated users to /access/* or an IdP domain; success lands
-      // back on /agent/*.
+      // back on /agent/* (typically /agent/home/tickets).
       await page.waitForURL(
         (url) =>
           url.host === `${subdomain}.zendesk.com` &&
           url.pathname.startsWith("/agent"),
         { timeout: timeoutMs }
       );
-      // Give the SPA a moment to settle so all auth cookies are written.
-      await page.waitForLoadState("networkidle").catch(() => {});
+
+      // The agent app is authenticated and fully ready once it has rendered the
+      // CSRF token into the page. We wait for that (instead of networkidle,
+      // which never settles because the workspace holds long-lived pubsub
+      // connections) — this lets us close the browser promptly and capture the
+      // token in one step. waitForFunction also rides out the SPA's client-side
+      // redirect to the dashboard, which would otherwise destroy a one-shot
+      // evaluate. The token is needed for write requests (the cookie alone only
+      // authorizes reads).
+      let token: string | null = null;
+      try {
+        const handle = await page.waitForFunction(
+          () =>
+            document
+              .querySelector('meta[name="csrf-token"]')
+              ?.getAttribute("content") || null,
+          { timeout: 15_000 }
+        );
+        token = (await handle.jsonValue()) as string | null;
+      } catch {
+        /* fall back to HTTP capture below */
+      }
 
       await context.storageState({ path: this.cfg.storageStatePath });
-
-      // Capture the CSRF token the agent app embeds in the page — it's required
-      // for write requests (the session cookie alone only authorizes reads).
-      const token = await page
-        .evaluate(() =>
-          document
-            .querySelector('meta[name="csrf-token"]')
-            ?.getAttribute("content")
-        )
-        .catch(() => null);
-      if (token) await fsp.writeFile(this.cfg.csrfTokenPath, token, "utf8");
-
       await context.close();
+      await browser.close();
+
+      // Persist the CSRF token. Prefer the one read from the page; if that
+      // didn't yield one, fetch it over HTTP with the freshly-saved cookies
+      // (refreshCsrfToken writes the file itself).
+      if (token) await fsp.writeFile(this.cfg.csrfTokenPath, token, "utf8");
+      else await this.refreshCsrfToken(subdomain).catch(() => {});
+
       return { savedTo: this.cfg.storageStatePath };
     } finally {
-      await browser.close();
+      if (browser.isConnected()) await browser.close();
     }
   }
 
