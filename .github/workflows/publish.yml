@@ -41,4 +41,4 @@ jobs:
           echo "npm:  $(npm -v)  (which: $(which npm))"
           echo "OIDC request URL present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}${ACTIONS_ID_TOKEN_REQUEST_URL:-NO}"
       # Provenance is generated automatically under trusted publishing.
-      - run: npm publish
+      - run: npm publish --loglevel silly
