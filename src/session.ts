@@ -1,11 +1,6 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
-import {
-  chromium,
-  type Browser,
-  type BrowserContext,
-  type Page,
-} from "playwright";
+import { chromium } from "playwright";
 import { baseUrl, requireSubdomain, type Config } from "./config.js";
 
 /**
@@ -14,28 +9,45 @@ import { baseUrl, requireSubdomain, type Config } from "./config.js";
  * run the `zendesk_login` tool.
  */
 export class NotLoggedInError extends Error {
-  constructor() {
+  constructor(detail?: string) {
     super(
       "Not logged in to Zendesk (no valid saved session). " +
         "Run the `zendesk_login` tool first — it opens a browser window so you " +
-        "can sign in (including SSO/2FA). The session is then reused automatically."
+        "can sign in (including SSO/2FA). The session is then reused automatically." +
+        (detail ? ` (${detail})` : "")
     );
     this.name = "NotLoggedInError";
   }
 }
 
+/** One cookie as persisted by Playwright's storageState. */
+interface StoredCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  /** Seconds since epoch, or -1 for a session cookie. */
+  expires: number;
+}
+
+/** Does `host` fall under the scope of a cookie's `domain` attribute? */
+function domainMatches(host: string, cookieDomain: string): boolean {
+  const d = cookieDomain.startsWith(".") ? cookieDomain.slice(1) : cookieDomain;
+  return host === d || host.endsWith(`.${d}`);
+}
+
 /**
- * Owns the Playwright browser session for the lifetime of the MCP process.
+ * Owns Zendesk authentication for the lifetime of the MCP process.
  *
  * Auth model: the user logs in once via a *visible* browser (`login()`), we save
- * the resulting cookies/localStorage to `storageState.json`, and every later
- * operation spins up a context seeded from that file — so reads run headlessly
- * with no credentials in code. When the session expires, reads detect the
- * redirect to the sign-in page and throw NotLoggedInError.
+ * the resulting cookies to `storageState.json` via Playwright. Every later
+ * operation reads those cookies and replays them as a `Cookie` header against the
+ * Zendesk REST API — Zendesk's own agent UI authenticates the same way, and a
+ * valid session cookie is all a GET request needs (no CSRF token required for
+ * reads). When the session expires the API returns 401/403 and we surface
+ * NotLoggedInError.
  */
 export class ZendeskSession {
-  private browser: Browser | null = null;
-
   constructor(private readonly cfg: Config) {}
 
   private async ensureSessionDir(): Promise<void> {
@@ -46,18 +58,12 @@ export class ZendeskSession {
     return fs.existsSync(this.cfg.storageStatePath);
   }
 
-  private async launch(headless: boolean): Promise<Browser> {
-    if (this.browser && this.browser.isConnected()) return this.browser;
-    this.browser = await chromium.launch({ headless });
-    return this.browser;
-  }
-
   /**
    * Open a visible browser at the Zendesk sign-in page and wait for the user to
    * finish authenticating (any method: password, SSO, 2FA). Detected by landing
-   * on an authenticated /agent route. Persists the session on success.
+   * on an authenticated /agent route. Persists the session cookies on success.
    */
-  async login(timeoutMs = 300_000): Promise<{ savedTo: string }> {
+  async login(timeoutMs = this.cfg.loginTimeoutMs): Promise<{ savedTo: string }> {
     const subdomain = requireSubdomain(this.cfg);
     await this.ensureSessionDir();
 
@@ -83,6 +89,18 @@ export class ZendeskSession {
       await page.waitForLoadState("networkidle").catch(() => {});
 
       await context.storageState({ path: this.cfg.storageStatePath });
+
+      // Capture the CSRF token the agent app embeds in the page — it's required
+      // for write requests (the session cookie alone only authorizes reads).
+      const token = await page
+        .evaluate(() =>
+          document
+            .querySelector('meta[name="csrf-token"]')
+            ?.getAttribute("content")
+        )
+        .catch(() => null);
+      if (token) await fsp.writeFile(this.cfg.csrfTokenPath, token, "utf8");
+
       await context.close();
       return { savedTo: this.cfg.storageStatePath };
     } finally {
@@ -91,50 +109,79 @@ export class ZendeskSession {
   }
 
   /**
-   * Run `fn` with an authenticated page seeded from the saved session.
-   * Throws NotLoggedInError if there is no session or it has expired.
+   * Build the `Cookie` request header for API calls against this instance,
+   * from the cookies saved at login. Only cookies scoped to the instance host
+   * and not expired are included. Throws NotLoggedInError when there's no
+   * usable session.
    */
-  async withPage<T>(fn: (page: Page, subdomain: string) => Promise<T>): Promise<T> {
-    const subdomain = requireSubdomain(this.cfg);
+  async cookieHeader(subdomain: string): Promise<string> {
     if (!this.hasSavedSession()) throw new NotLoggedInError();
 
-    const browser = await this.launch(this.cfg.headless);
-    const context: BrowserContext = await browser.newContext({
-      storageState: this.cfg.storageStatePath,
-    });
-    context.setDefaultTimeout(this.cfg.navTimeoutMs);
-    context.setDefaultNavigationTimeout(this.cfg.navTimeoutMs);
-
-    const page = await context.newPage();
+    let cookies: StoredCookie[];
     try {
-      return await fn(page, subdomain);
-    } finally {
-      await context.close();
+      const raw = await fsp.readFile(this.cfg.storageStatePath, "utf8");
+      cookies = (JSON.parse(raw)?.cookies ?? []) as StoredCookie[];
+    } catch (err) {
+      throw new NotLoggedInError(
+        `could not read session file: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
+
+    const host = `${subdomain}.zendesk.com`;
+    const nowSec = Date.now() / 1000;
+    const usable = cookies.filter(
+      (c) =>
+        domainMatches(host, c.domain) &&
+        (c.expires === -1 || c.expires > nowSec)
+    );
+
+    if (usable.length === 0) {
+      throw new NotLoggedInError("saved session has no valid cookies for this instance");
+    }
+    return usable.map((c) => `${c.name}=${c.value}`).join("; ");
   }
 
   /**
-   * Navigate to an /agent path and assert we stayed authenticated.
-   * Detects the redirect-to-login that signals an expired session.
+   * The CSRF token required for write requests. Returns the token captured at
+   * login if present, otherwise fetches a fresh one. Pass `forceRefresh` to
+   * re-fetch (e.g. after a write was rejected with an auth error).
    */
-  async gotoAgent(page: Page, subdomain: string, pathOrUrl: string): Promise<void> {
-    const url = pathOrUrl.startsWith("http")
-      ? pathOrUrl
-      : `${baseUrl(subdomain)}${pathOrUrl}`;
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-
-    const current = new URL(page.url());
-    const onLogin =
-      current.pathname.startsWith("/access") ||
-      current.pathname.startsWith("/auth") ||
-      current.host !== `${subdomain}.zendesk.com`;
-    if (onLogin) throw new NotLoggedInError();
+  async csrfToken(subdomain: string, forceRefresh = false): Promise<string> {
+    if (!forceRefresh) {
+      try {
+        const cached = (await fsp.readFile(this.cfg.csrfTokenPath, "utf8")).trim();
+        if (cached) return cached;
+      } catch {
+        /* fall through to refresh */
+      }
+    }
+    return this.refreshCsrfToken(subdomain);
   }
 
-  async close(): Promise<void> {
-    if (this.browser && this.browser.isConnected()) {
-      await this.browser.close();
+  /**
+   * Fetch the agent app shell with the session cookie and parse the CSRF token
+   * out of its `<meta name="csrf-token">` tag, persisting it for reuse. The
+   * token is stable for the life of the session.
+   */
+  async refreshCsrfToken(subdomain: string): Promise<string> {
+    const cookie = await this.cookieHeader(subdomain);
+    const res = await fetch(`${baseUrl(subdomain)}/agent/`, {
+      headers: { Cookie: cookie, "User-Agent": "Mozilla/5.0" },
+    });
+    if (res.status === 401 || res.status === 403) {
+      throw new NotLoggedInError(`agent shell returned ${res.status}`);
     }
-    this.browser = null;
+    const html = await res.text();
+    const token = html.match(
+      /<meta name="csrf-token" content="([^"]+)"/
+    )?.[1];
+    if (!token) {
+      throw new Error(
+        "Could not find a CSRF token in the agent page. Re-run zendesk_login."
+      );
+    }
+    await this.ensureSessionDir();
+    await fsp.writeFile(this.cfg.csrfTokenPath, token, "utf8");
+    return token;
   }
 }

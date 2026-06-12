@@ -5,3 +5,4 @@ dist/
 # Persisted browser session — contains live Zendesk auth cookies. NEVER commit.
 .zendesk-session/
 storageState.json
+csrf.txt

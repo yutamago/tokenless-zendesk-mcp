@@ -1,40 +1,76 @@
-# Zendesk MCP (browser-driven)
+# Zendesk MCP
 
-An MCP server that drives the **Zendesk Agent web UI through a headless Playwright
-browser** — it uses **no Zendesk REST API and no API token**. It signs in like a
-person, then scrapes the rendered agent interface.
+An MCP server for Zendesk. You sign in **once** in a real browser (Playwright) —
+any method works, including SSO and 2FA — and the resulting **session cookies are
+then used to call the Zendesk REST API** directly. No API token, OAuth client, or
+admin setup required: it acts with exactly your agent account's permissions.
+
+This is the same way Zendesk's own agent web UI talks to its API — a valid session
+cookie is all a `GET` request needs (no CSRF token is required for reads).
 
 ## What it can do
 
+**Reads**
+
 | Tool | Description |
 |---|---|
-| `zendesk_login` | Open a **visible** browser to sign in (password / SSO / 2FA). Saves the session. |
-| `zendesk_session_status` | Check whether a saved session exists and is still valid. |
-| `zendesk_list_views` | List the agent's views with their numeric IDs. |
-| `zendesk_fetch_view_tickets` | Fetch all tickets in a view, following pagination. |
-| `zendesk_search` | Search via `/agent/search/?q=…`. |
-| `zendesk_get_ticket` | Subject, assignee, tags, custom fields (incl. product), full conversation, and attachments. |
-| `zendesk_download_attachment` | Download an attachment (by its `url` from `get_ticket`) to a path or directory. |
-| `zendesk_inspect` | Diagnostic: dump a page's HTML + screenshot to tune selectors. |
+| `zendesk_login` | Open a **visible** browser to sign in (password / SSO / 2FA). Saves the session cookies + CSRF token. |
+| `zendesk_session_status` | Check whether a saved session exists and is still valid (calls the API as the current user). |
+| `zendesk_list_views` | List the agent's active views with numeric IDs, titles, and cached ticket counts. |
+| `zendesk_fetch_view_tickets` | Fetch tickets in a view, following pagination (`limit` caps the count). |
+| `zendesk_search` | Search via `/api/v2/search` — any Zendesk query string; returns results tagged by type. |
+| `zendesk_get_ticket` | Subject, status, parties, tags, custom fields (incl. product), full comment thread, and attachments. |
+| `zendesk_download_attachment` | Download an attachment (by its `content_url` from `get_ticket`) to a path or directory. |
+| `zendesk_requester_tickets` | List the tickets a user has requested (their history) — "have they reported this before?". |
+| `zendesk_organization_tickets` | List tickets belonging to an organization. |
+| `zendesk_ticket_fields` | Field definitions **with valid dropdown/tagger option values** — look up the `value` to set a custom field. |
+| `zendesk_ticket_metrics` | SLA / timing metrics for a ticket (reply time, resolution time, reopens, replies). |
+| `zendesk_list_macros` | List active macros with ids and titles (for `zendesk_apply_macro`). |
+| `zendesk_search_users` | Find users by free-text (name, email, …). |
+| `zendesk_get_user` | Fetch one user by id. |
+| `zendesk_ticket_audits` | Full audit trail (every change/event) for a ticket. |
+| `zendesk_request` | Read-only passthrough to **any** `/api/v2` endpoint — for anything the dedicated tools don't cover. |
 
-> Notifications were intentionally left out for now — the tray scraping is wired up
-> in git history but was removed until there are real notifications to validate against.
+**Writes** (require the CSRF token — see [Writes](#writes-csrf) below)
 
-**Attachments.** `zendesk_get_ticket` returns an `attachments` array; each item has a
-`token`, `filename`, `url`, and `source` (`image` for inline images, `link` for file
-attachments like logs/PDFs). Pass an attachment's `url` to `zendesk_download_attachment`
-along with a `destination` (a file path, or a directory to save under the original
-filename). Downloads use the authenticated session, so private attachments work.
+| Tool | Description |
+|---|---|
+| `zendesk_add_comment` | Add a public reply or internal note to a ticket. |
+| `zendesk_update_ticket` | Set status, priority, type, assignee, group, tags, and custom fields (optionally with a comment). |
+| `zendesk_apply_macro` | Apply a macro and persist its changes (status/fields/comment) to a ticket. |
+
+**Attachments.** `zendesk_get_ticket` returns an `attachments` array; each item has
+an `id`, `file_name`, `content_url`, `content_type`, and `size`. Pass an attachment's
+`content_url` to `zendesk_download_attachment` along with a `destination` (a file
+path, or a directory to save under the original filename). Downloads use the
+authenticated session, so private attachments work.
+
+**`zendesk_request`** unlocks the rest of the [Zendesk REST
+API](https://developer.zendesk.com/api-reference/) for reads — e.g.
+`tickets/123/audits`, `ticket_metrics`, `organizations`, `users/123`,
+`satisfaction_ratings`. It is GET-only by design (write operations would require a
+CSRF token, which is out of scope).
 
 ## How auth works
 
-You sign in **once** in a real browser window — any method works, including SSO
-and 2FA. Playwright saves the resulting cookies/localStorage to
-`~/.zendesk-mcp/storageState.json`. Every other tool spins up a headless browser
-seeded from that file, so reads run with no credentials in code. When the session
-expires, tools return a clear "run `zendesk_login`" message.
+You sign in **once** in a real browser window. Playwright saves the resulting
+cookies to `~/.zendesk-mcp/storageState.json`. Every other tool reads the cookies
+scoped to your instance and replays them as a `Cookie` header against
+`https://{subdomain}.zendesk.com/api/v2/…`. When the session expires the API
+returns 401/403 and the tool returns a clear "run `zendesk_login`" message.
 
 > The session file holds live auth cookies — it's git-ignored. Treat it like a password.
+
+### Writes (CSRF)
+
+`GET` requests authenticate with the session cookie alone. Write requests
+(`POST`/`PUT`/`DELETE`) additionally require Zendesk's **CSRF token** — the same
+one the agent UI uses. It's captured at login (from the agent page's
+`<meta name="csrf-token">`) and saved to `~/.zendesk-mcp/csrf.txt`. The token is
+stable for the life of the session; if it ever goes stale, the server fetches a
+fresh one automatically and retries the write once. The write tools
+(`zendesk_add_comment`, `zendesk_update_ticket`, `zendesk_apply_macro`) modify
+real tickets — confirm changes with the user before sending.
 
 ## Setup
 
@@ -62,7 +98,7 @@ the standalone CLI is more reliable since not every MCP host surfaces the window
 ## Add to Claude Code
 
 ```bash
-claude mcp add zendesk -- node /home/angelo/workspaces/oss_ws/zendesk_mcp/dist/index.js
+claude mcp add zendesk -- node /path/to/tokenless-zendesk-mcp/dist/index.js
 ```
 
 Or add to your MCP config (`.mcp.json` / Claude Desktop config):
@@ -72,7 +108,7 @@ Or add to your MCP config (`.mcp.json` / Claude Desktop config):
   "mcpServers": {
     "zendesk": {
       "command": "node",
-      "args": ["/home/angelo/workspaces/oss_ws/zendesk_mcp/dist/index.js"],
+      "args": ["/path/to/tokenless-zendesk-mcp/dist/index.js"],
       "env": {
         "ZENDESK_SUBDOMAIN": "youracme"
       }
@@ -87,21 +123,25 @@ Or add to your MCP config (`.mcp.json` / Claude Desktop config):
 |---|---|---|
 | `ZENDESK_SUBDOMAIN` | — (**required**) | The `{subdomain}` in `https://{subdomain}.zendesk.com`. |
 | `ZENDESK_SESSION_DIR` | `~/.zendesk-mcp` | Where the saved session lives. |
-| `ZENDESK_HEADLESS` | `true` | Set `false` to watch read operations in a real window (debugging). |
-| `ZENDESK_NAV_TIMEOUT` | `45000` | Per-navigation timeout in ms. |
+| `ZENDESK_API_TIMEOUT` | `30000` | Per-request timeout in ms. |
+| `ZENDESK_LOGIN_TIMEOUT` | `300000` | How long the login window waits for you to finish signing in, in ms. |
 
-## Tuning selectors
+## Verify
 
-The Agent SPA's markup changes between Zendesk releases. All DOM selectors live in
-**`src/selectors.ts`**, targeting stable `data-test-id` attributes and href
-patterns with fallbacks. If a tool returns empty or partial data:
+After building and logging in:
 
-1. Call `zendesk_inspect` with the relevant path (e.g. `/agent/tickets/123`).
-2. Inspect the returned HTML/screenshot to find the right selector.
-3. Update `src/selectors.ts`, then `npm run build`.
+```bash
+ZENDESK_SUBDOMAIN=youracme node scripts/verify.mjs
+```
 
-## Limitations
+It calls `me`, `listViews`, `search`, and `getTicket` against your live instance.
 
-- This depends on Zendesk's HTML; treat it as best-effort scraping, not a stable API.
+## Notes & limitations
+
+- Auth is session-cookie based. Cookies expire (and SSO sessions time out), so
+  you'll re-run `zendesk_login` periodically.
 - It respects whatever permissions your agent account has — nothing more.
-- Heavy/automated use may run afoul of your Zendesk plan's terms; use responsibly.
+- The API is paginated; list tools cap results (`limit`) and page 100 at a time.
+  Rate-limited (429) responses are retried honoring `Retry-After`.
+- Writes are supported via the session CSRF token (see [Writes](#writes-csrf)).
+  They act with your agent permissions — review changes before sending.

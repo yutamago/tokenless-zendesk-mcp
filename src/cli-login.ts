@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * Standalone login helper. Run `npm run login` (after `npm run build`) to open a
- * visible browser, sign in to Zendesk once, and persist the session that the MCP
- * server then reuses headlessly. Handy because some MCP hosts don't surface the
- * interactive browser window the in-tool `zendesk_login` opens.
+ * visible browser, sign in to Zendesk once, and persist the session cookies the
+ * MCP server then replays against the Zendesk REST API. Handy because some MCP
+ * hosts don't surface the interactive browser window the in-tool `zendesk_login`
+ * opens.
  */
 import { loadConfig, requireSubdomain } from "./config.js";
 import { ZendeskSession } from "./session.js";
@@ -17,7 +18,6 @@ async function main() {
   console.error("Complete the login (password / SSO / 2FA) in the window.");
   const { savedTo } = await session.login();
   console.error(`✓ Session saved to ${savedTo}`);
-  await session.close();
   process.exit(0);
 }
 

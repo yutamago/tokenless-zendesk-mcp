@@ -1,7 +1,7 @@
 {
-  "name": "zendesk-mcp",
-  "version": "0.1.0",
-  "description": "MCP server that drives the Zendesk Agent web UI through a headless Playwright browser (no Zendesk REST API).",
+  "name": "tokenless-zendesk-mcp",
+  "version": "0.2.0",
+  "description": "MCP server for Zendesk: interactive Playwright login, then the saved session cookies are used to call the Zendesk REST API.",
   "type": "module",
   "bin": {
     "zendesk-mcp": "dist/index.js"

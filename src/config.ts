@@ -5,19 +5,21 @@ import path from "node:path";
  * Runtime configuration, all sourced from environment variables so the server
  * can be pointed at any Zendesk instance without code changes.
  *
- *   ZENDESK_SUBDOMAIN   required — the {subdomain} in https://{subdomain}.zendesk.com
- *   ZENDESK_SESSION_DIR optional — where the persisted Playwright session lives
- *                                  (default: ~/.zendesk-mcp)
- *   ZENDESK_HEADLESS    optional — "false" forces a visible browser for all ops
- *                                  (login is always visible regardless)
- *   ZENDESK_NAV_TIMEOUT optional — navigation/render timeout in ms (default 45000)
+ *   ZENDESK_SUBDOMAIN     required — the {subdomain} in https://{subdomain}.zendesk.com
+ *   ZENDESK_SESSION_DIR   optional — where the persisted Playwright session lives
+ *                                    (default: ~/.zendesk-mcp)
+ *   ZENDESK_API_TIMEOUT   optional — per-request timeout in ms (default 30000)
+ *   ZENDESK_LOGIN_TIMEOUT optional — how long the visible login window waits for
+ *                                    you to finish signing in, in ms (default 300000)
  */
 export interface Config {
   subdomain: string | undefined;
   sessionDir: string;
   storageStatePath: string;
-  headless: boolean;
-  navTimeoutMs: number;
+  /** Where the captured CSRF token (needed for write requests) is persisted. */
+  csrfTokenPath: string;
+  apiTimeoutMs: number;
+  loginTimeoutMs: number;
 }
 
 export function loadConfig(): Config {
@@ -29,8 +31,9 @@ export function loadConfig(): Config {
     subdomain: process.env.ZENDESK_SUBDOMAIN?.trim() || undefined,
     sessionDir,
     storageStatePath: path.join(sessionDir, "storageState.json"),
-    headless: process.env.ZENDESK_HEADLESS !== "false",
-    navTimeoutMs: Number(process.env.ZENDESK_NAV_TIMEOUT) || 45000,
+    csrfTokenPath: path.join(sessionDir, "csrf.txt"),
+    apiTimeoutMs: Number(process.env.ZENDESK_API_TIMEOUT) || 30_000,
+    loginTimeoutMs: Number(process.env.ZENDESK_LOGIN_TIMEOUT) || 300_000,
   };
 }
 
@@ -45,6 +48,12 @@ export function requireSubdomain(cfg: Config): string {
   return cfg.subdomain;
 }
 
+/** Origin for the instance, e.g. https://youracme.zendesk.com */
 export function baseUrl(subdomain: string): string {
   return `https://${subdomain}.zendesk.com`;
+}
+
+/** REST API v2 base, e.g. https://youracme.zendesk.com/api/v2 */
+export function apiBase(subdomain: string): string {
+  return `${baseUrl(subdomain)}/api/v2`;
 }
