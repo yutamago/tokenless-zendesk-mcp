@@ -11,6 +11,9 @@ on:
   push:
     tags:
       - "v*"
+  # Manual trigger: publishes whatever version is in package.json on the chosen
+  # ref. Useful to re-run a failed publish without re-tagging.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,10 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # NOTE: deliberately no `registry-url` here. Setting it makes setup-node
+      # write an .npmrc with `_authToken=${NODE_AUTH_TOKEN}`; with no token that
+      # empty value makes npm auth with an empty token (HTTP 404) instead of
+      # falling through to OIDC. npm defaults to registry.npmjs.org anyway.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://registry.npmjs.org
       # Trusted publishing requires npm >= 11.5.1.
       - run: npm install -g npm@latest
       - run: npm ci
