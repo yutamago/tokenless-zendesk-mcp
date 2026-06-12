@@ -23,12 +23,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # NOTE: deliberately no `registry-url` here. Setting it makes setup-node
       # write an .npmrc with `_authToken=${NODE_AUTH_TOKEN}`; with no token that
       # empty value makes npm auth with an empty token (HTTP 404) instead of
       # falling through to OIDC. npm defaults to registry.npmjs.org anyway.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
       # Trusted publishing requires npm >= 11.5.1.
