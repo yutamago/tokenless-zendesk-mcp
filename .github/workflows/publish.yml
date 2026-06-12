@@ -38,10 +38,5 @@ jobs:
       - run: npm install -g npm@latest
       - run: npm ci
       - run: npm run build
-      # Diagnostics: confirm OIDC preconditions (npm >= 11.5.1 + id-token env).
-      - run: |
-          echo "node: $(node -v)"
-          echo "npm:  $(npm -v)  (which: $(which npm))"
-          echo "OIDC request URL present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}${ACTIONS_ID_TOKEN_REQUEST_URL:-NO}"
       # Provenance is generated automatically under trusted publishing.
-      - run: npm publish --loglevel silly
+      - run: npm publish
