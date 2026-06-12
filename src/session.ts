@@ -1,7 +1,42 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import { baseUrl, requireSubdomain, type Config } from "./config.js";
+
+/**
+ * Ensure Playwright's Chromium build is present, downloading it on first use.
+ *
+ * The browser is only needed for the interactive `login()` below — the MCP server
+ * and every read/write tool talk to the REST API over `fetch` and never launch a
+ * browser. So instead of an eager `postinstall` download (which would make every
+ * cold `npx` start pay for ~150 MB before answering a single request), we install
+ * Chromium lazily here, the first time someone logs in. Progress is streamed to
+ * stderr so it never corrupts the stdout MCP JSON-RPC channel.
+ */
+async function ensureBrowserInstalled(): Promise<void> {
+  if (fs.existsSync(chromium.executablePath())) return;
+
+  const require = createRequire(import.meta.url);
+  const cli = path.join(
+    path.dirname(require.resolve("playwright/package.json")),
+    "cli.js"
+  );
+  console.error("Downloading the Chromium browser for the first-time login ...");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, "install", "chromium"], {
+      stdio: ["ignore", process.stderr, process.stderr],
+    });
+    child.on("error", reject);
+    child.on("exit", (code) =>
+      code === 0
+        ? resolve()
+        : reject(new Error(`playwright install chromium exited with code ${code}`))
+    );
+  });
+}
 
 /**
  * Thrown when an operation needs an authenticated session but none exists
@@ -66,6 +101,7 @@ export class ZendeskSession {
   async login(timeoutMs = this.cfg.loginTimeoutMs): Promise<{ savedTo: string }> {
     const subdomain = requireSubdomain(this.cfg);
     await this.ensureSessionDir();
+    await ensureBrowserInstalled();
 
     // Login is ALWAYS headed — the user must see and drive the sign-in.
     const browser = await chromium.launch({ headless: false });

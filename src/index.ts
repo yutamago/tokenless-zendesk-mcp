@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadConfig } from "./config.js";
+import { loadConfig, requireSubdomain } from "./config.js";
 import { ZendeskSession, NotLoggedInError } from "./session.js";
 import { ZendeskApi } from "./api.js";
 
@@ -12,7 +12,7 @@ const api = new ZendeskApi(session, cfg);
 
 const server = new McpServer({
   name: "zendesk-mcp",
-  version: "0.2.0",
+  version: "0.3.0",
 });
 
 function jsonResult(data: unknown) {
@@ -527,6 +527,21 @@ server.registerTool(
   }
 );
 
+/**
+ * Run the one-time interactive login, then exit. Exposed as the `login`
+ * subcommand so `npx tokenless-zendesk-mcp login` works without a clone or build
+ * step — some MCP hosts also don't surface the window the `zendesk_login` tool
+ * opens, so a standalone command is more reliable.
+ */
+async function runLogin() {
+  requireSubdomain(cfg); // fail fast with a clear message
+  console.error(`Opening browser to sign in to ${cfg.subdomain}.zendesk.com ...`);
+  console.error("Complete the login (password / SSO / 2FA) in the window.");
+  const { savedTo } = await session.login();
+  console.error(`✓ Session saved to ${savedTo}`);
+  process.exit(0);
+}
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -535,7 +550,8 @@ async function main() {
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((err) => {
-  console.error("Fatal:", err);
+const entry = process.argv[2] === "login" ? runLogin() : main();
+entry.catch((err) => {
+  console.error("Fatal:", err instanceof Error ? err.message : err);
   process.exit(1);
 });

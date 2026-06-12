@@ -1,8 +1,24 @@
 {
   "name": "tokenless-zendesk-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server for Zendesk: interactive Playwright login, then the saved session cookies are used to call the Zendesk REST API.",
   "type": "module",
+  "license": "MIT",
+  "author": "yutamago",
+  "homepage": "https://github.com/yutamago/tokenless-zendesk-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yutamago/tokenless-zendesk-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yutamago/tokenless-zendesk-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "zendesk",
+    "model-context-protocol",
+    "claude"
+  ],
   "bin": {
     "zendesk-mcp": "dist/index.js"
   },
@@ -13,8 +29,7 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
-    "login": "node dist/cli-login.js",
-    "postinstall": "playwright install chromium"
+    "login": "node dist/index.js login"
   },
   "engines": {
     "node": ">=20"

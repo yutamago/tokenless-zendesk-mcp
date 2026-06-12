@@ -72,36 +72,52 @@ fresh one automatically and retries the write once. The write tools
 (`zendesk_add_comment`, `zendesk_update_ticket`, `zendesk_apply_macro`) modify
 real tickets — confirm changes with the user before sending.
 
-## Setup
+## Add to Claude Code
 
-```bash
-npm install        # also runs `playwright install chromium`
-npm run build
+No clone, no build — just point your MCP config at `npx`. Add to your `.mcp.json`
+(or Claude Desktop config), replacing `youracme` with your Zendesk subdomain:
+
+```json
+{
+  "mcpServers": {
+    "zendesk": {
+      "command": "npx",
+      "args": ["-y", "tokenless-zendesk-mcp"],
+      "env": {
+        "ZENDESK_SUBDOMAIN": "youracme"
+      }
+    }
+  }
+}
 ```
+
+Or with the CLI: `claude mcp add zendesk -e ZENDESK_SUBDOMAIN=youracme -- npx -y tokenless-zendesk-mcp`
 
 ### First login
 
-The login step needs a **visible** browser, so it needs a display.
+You sign in **once** in a real browser window. Run the bundled `login` subcommand
+(it downloads Chromium on first use, then opens the window):
 
 ```bash
-ZENDESK_SUBDOMAIN=youracme npm run login
+ZENDESK_SUBDOMAIN=youracme npx -y tokenless-zendesk-mcp login
 ```
 
 - **macOS / Windows / Linux desktop:** a Chromium window opens — sign in, done.
 - **WSL2:** you need **WSLg** (Windows 11) or an X server so the window can show.
-  If `npm run login` can't open a window, run the login step on the Windows host,
-  or set `DISPLAY` to your X server.
+  If the window can't open, run the login on the Windows host, or set `DISPLAY`.
 
 You can also trigger login from inside Claude with the `zendesk_login` tool, but
-the standalone CLI is more reliable since not every MCP host surfaces the window.
+the standalone command is more reliable since not every MCP host surfaces the window.
 
-## Add to Claude Code
+## From source (contributors)
 
 ```bash
-claude mcp add zendesk -- node /path/to/tokenless-zendesk-mcp/dist/index.js
+npm install
+npm run build
+ZENDESK_SUBDOMAIN=youracme npm run login   # one-time browser sign-in
 ```
 
-Or add to your MCP config (`.mcp.json` / Claude Desktop config):
+Then point your MCP config at the build instead of npx:
 
 ```json
 {
@@ -109,9 +125,7 @@ Or add to your MCP config (`.mcp.json` / Claude Desktop config):
     "zendesk": {
       "command": "node",
       "args": ["/path/to/tokenless-zendesk-mcp/dist/index.js"],
-      "env": {
-        "ZENDESK_SUBDOMAIN": "youracme"
-      }
+      "env": { "ZENDESK_SUBDOMAIN": "youracme" }
     }
   }
 }
