@@ -30,7 +30,7 @@ jobs:
       # falling through to OIDC. npm defaults to registry.npmjs.org anyway.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
       # Trusted publishing requires npm >= 11.5.1.
       - run: npm install -g npm@latest
       - run: npm ci
