@@ -131,6 +131,9 @@ Then point your MCP config at the build instead of npx:
 }
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the release process and how
+publishing is configured.
+
 ## Configuration (env vars)
 
 | Var | Default | Purpose |
