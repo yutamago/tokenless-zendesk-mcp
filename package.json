@@ -1,0 +1,31 @@
+{
+  "name": "zendesk-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that drives the Zendesk Agent web UI through a headless Playwright browser (no Zendesk REST API).",
+  "type": "module",
+  "bin": {
+    "zendesk-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "node dist/index.js",
+    "login": "node dist/cli-login.js",
+    "postinstall": "playwright install chromium"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "playwright": "^1.48.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
