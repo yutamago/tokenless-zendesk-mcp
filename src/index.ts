@@ -235,7 +235,12 @@ server.registerTool(
       "Download an attachment to the local filesystem using the authenticated " +
       "Zendesk session. Provide the attachment `content_url` from " +
       "zendesk_get_ticket and a `destination`. If `destination` is a directory, " +
-      "the attachment's own filename is used; otherwise it is the full file path.",
+      "the attachment's own filename is used; otherwise it is the full file path." +
+      (sanitizer.enabled
+        ? " Currently unavailable: GDPR Compliance Content Sanitization is " +
+          "enabled and attachments can't be sanitized yet, so every download is " +
+          "held back."
+        : ""),
     inputSchema: {
       url: z
         .string()
@@ -249,10 +254,24 @@ server.registerTool(
     annotations: { readOnlyHint: false, openWorldHint: true },
   },
   async ({ url, destination }) => {
+    if (sanitizer.enabled) {
+      // Files aren't sanitized yet, and anything written to disk can be read by
+      // the LLM — so nothing is downloaded at all.
+      return {
+        isError: true as const,
+        content: [
+          {
+            type: "text" as const,
+            text:
+              "Attachment held back: GDPR Compliance Content Sanitization is " +
+              "enabled, and attachments can't be sanitized yet. Nothing was " +
+              "downloaded. Ask the user to review the attachment in Zendesk directly.",
+          },
+        ],
+      };
+    }
     try {
-      return jsonResult(
-        await api.downloadAttachment(sanitizer.restoreUrl(url), destination)
-      );
+      return jsonResult(await api.downloadAttachment(url, destination));
     } catch (err) {
       return errorResult(err);
     }

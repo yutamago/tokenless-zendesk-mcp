@@ -20,7 +20,7 @@ cookie is all a `GET` request needs (no CSRF token is required for reads).
 | `zendesk_fetch_view_tickets` | Fetch tickets in a view, following pagination (`limit` caps the count). |
 | `zendesk_search` | Search via `/api/v2/search` — any Zendesk query string; returns results tagged by type. |
 | `zendesk_get_ticket` | Subject, status, parties, tags, custom fields (incl. product), full comment thread, and attachments. |
-| `zendesk_download_attachment` | Download an attachment (by its `content_url` from `get_ticket`) to a path or directory. |
+| `zendesk_download_attachment` | Download an attachment (by its `content_url` from `get_ticket`) to a path or directory. Held back while [GDPR sanitization](#gdpr-compliance-content-sanitization) is on. |
 | `zendesk_requester_tickets` | List the tickets a user has requested (their history) — "have they reported this before?". |
 | `zendesk_organization_tickets` | List tickets belonging to an organization. |
 | `zendesk_ticket_fields` | Field definitions **with valid dropdown/tagger option values** — look up the `value` to set a custom field. |
@@ -43,7 +43,9 @@ cookie is all a `GET` request needs (no CSRF token is required for reads).
 an `id`, `file_name`, `content_url`, `content_type`, and `size`. Pass an attachment's
 `content_url` to `zendesk_download_attachment` along with a `destination` (a file
 path, or a directory to save under the original filename). Downloads use the
-authenticated session, so private attachments work.
+authenticated session, so private attachments work. While [GDPR Compliance
+Content Sanitization](#gdpr-compliance-content-sanitization) is enabled,
+downloads are held back (see below).
 
 **`zendesk_request`** unlocks the rest of the [Zendesk REST
 API](https://developer.zendesk.com/api-reference/) for reads — e.g.
@@ -106,9 +108,14 @@ and treating spaces, hyphens, underscores and dots alike. So "Hans-Mueller" and
 - **Numeric ids are kept**, so the LLM can still chain tools, e.g. from
   `requester_id` to `zendesk_get_user`. Money amounts are detected but kept by
   default (see `ZENDESK_GDPR_KEEP_ENTITIES`).
-- **URLs keep working.** A redacted Zendesk URL, such as an attachment
-  `content_url` whose filename contained a name, is mapped back to the real URL
-  when the LLM passes it to `zendesk_download_attachment` or `zendesk_request`.
+- **URLs keep working.** A redacted Zendesk URL, such as a `next_page` link
+  with a search query, is mapped back to the real URL when the LLM passes it to
+  `zendesk_request`.
+- **Attachments are held back.** Files can't be sanitized yet, so
+  `zendesk_download_attachment` downloads nothing while sanitization is on.
+  Otherwise the original file would land on disk, where an LLM with file access
+  could read it. Attachment metadata in `zendesk_get_ticket` (with sanitized
+  filenames) is still returned.
 - **Fails closed.** If the model can't be loaded, tools return an error instead
   of unredacted data.
 
