@@ -44,7 +44,7 @@ async function ensureBrowserInstalled(): Promise<void> {
  * run the `zendesk_login` tool.
  */
 export class NotLoggedInError extends Error {
-  constructor(detail?: string) {
+  constructor(readonly detail?: string) {
     super(
       "Not logged in to Zendesk (no valid saved session). " +
         "Run the `zendesk_login` tool first — it opens a browser window so you " +

@@ -5,21 +5,68 @@ import { z } from "zod";
 import { loadConfig, requireSubdomain } from "./config.js";
 import { ZendeskSession, NotLoggedInError } from "./session.js";
 import { ZendeskApi } from "./api.js";
+import { PiiSanitizer, SanitizationUnavailableError } from "./sanitizer.js";
 
 const cfg = loadConfig();
 const session = new ZendeskSession(cfg);
 const api = new ZendeskApi(session, cfg);
+const sanitizer = new PiiSanitizer(cfg);
 
-const server = new McpServer({
-  name: "zendesk-mcp",
-  version: "0.3.0",
-});
+const server = new McpServer(
+  {
+    name: "zendesk-mcp",
+    version: "0.3.0",
+  },
+  sanitizer.enabled
+    ? {
+        instructions:
+          "GDPR Compliance Content Sanitization is enabled: personal data in " +
+          "tool results (names, emails, phone numbers, addresses, IDs, …) is " +
+          (cfg.gdpr.pseudonyms
+            ? "replaced with numbered placeholders such as [PERSON_NAME_1] or " +
+              "[EMAIL_ADDRESS_2]. The same value keeps the same placeholder across " +
+              "all tool results in this session, so you can tell people apart and " +
+              "follow them between tickets. "
+            : "replaced with placeholders such as [PERSON_NAME] or [EMAIL_ADDRESS]. ") +
+          "Refer to people by their numeric ids when calling tools. Never write " +
+          "these placeholders into comments or ticket fields — ask the user for " +
+          "the real value instead.",
+      }
+    : undefined
+);
 
-function jsonResult(data: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+/**
+ * Every tool result goes through here. With sanitization enabled, PII is
+ * redacted first; if that isn't possible the result is withheld (fail closed).
+ */
+async function jsonResult(data: unknown) {
+  try {
+    const clean = await sanitizer.sanitize(data);
+    return { content: [{ type: "text" as const, text: JSON.stringify(clean, null, 2) }] };
+  } catch (err) {
+    return errorResult(err);
+  }
 }
-function errorResult(err: unknown) {
-  const message = err instanceof Error ? err.message : String(err);
+async function errorResult(err: unknown) {
+  let message: string;
+  try {
+    if (err instanceof SanitizationUnavailableError) {
+      message = err.message;
+    } else if (err instanceof NotLoggedInError) {
+      // Fixed guidance text — only the detail (a request URL) can carry data.
+      message = new NotLoggedInError(
+        err.detail && (await sanitizer.sanitizeText(err.detail))
+      ).message;
+    } else {
+      // Error messages can echo API response bodies, so they are sanitized too.
+      message = await sanitizer.sanitizeText(err instanceof Error ? err.message : String(err));
+    }
+  } catch (e) {
+    message =
+      e instanceof SanitizationUnavailableError
+        ? e.message
+        : "Error details withheld: GDPR sanitization of the message failed.";
+  }
   return {
     isError: true as const,
     content: [{ type: "text" as const, text: message }],
@@ -203,7 +250,9 @@ server.registerTool(
   },
   async ({ url, destination }) => {
     try {
-      return jsonResult(await api.downloadAttachment(url, destination));
+      return jsonResult(
+        await api.downloadAttachment(sanitizer.restoreUrl(url), destination)
+      );
     } catch (err) {
       return errorResult(err);
     }
@@ -520,7 +569,7 @@ server.registerTool(
   },
   async ({ path, query }) => {
     try {
-      return jsonResult(await api.request(path, query));
+      return jsonResult(await api.request(sanitizer.restoreUrl(path), query));
     } catch (err) {
       return errorResult(err);
     }
@@ -542,15 +591,36 @@ async function runLogin() {
   process.exit(0);
 }
 
+/**
+ * Download the GDPR sanitization model ahead of time, so the first tool call
+ * doesn't have to wait for it (it's several hundred MB).
+ */
+async function runDownloadModel() {
+  console.error(`Downloading ${cfg.gdpr.model} (${cfg.gdpr.dtype}) to ${cfg.gdpr.modelDir} ...`);
+  await sanitizer.load();
+  console.error("✓ GDPR sanitization model ready");
+  process.exit(0);
+}
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  if (sanitizer.enabled) {
+    // Warm up in the background; tool calls wait for (or retry) the same load.
+    sanitizer.load().catch((err) => console.error(`[gdpr] ${err.message}`));
+  }
   const shutdown = () => process.exit(0);
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }
 
-const entry = process.argv[2] === "login" ? runLogin() : main();
+const command = process.argv[2];
+const entry =
+  command === "login"
+    ? runLogin()
+    : command === "download-model"
+      ? runDownloadModel()
+      : main();
 entry.catch((err) => {
   console.error("Fatal:", err instanceof Error ? err.message : err);
   process.exit(1);
