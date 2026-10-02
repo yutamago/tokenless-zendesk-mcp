@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -6,6 +7,11 @@ import { loadConfig, requireSubdomain } from "./config.js";
 import { ZendeskSession, NotLoggedInError } from "./session.js";
 import { ZendeskApi } from "./api.js";
 import { PiiSanitizer, SanitizationUnavailableError } from "./sanitizer.js";
+
+/** Read from package.json (shipped next to dist/) so it can't drift from releases. */
+const { version } = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+) as { version: string };
 
 const cfg = loadConfig();
 const session = new ZendeskSession(cfg);
@@ -15,7 +21,7 @@ const sanitizer = new PiiSanitizer(cfg);
 const server = new McpServer(
   {
     name: "zendesk-mcp",
-    version: "0.3.0",
+    version,
   },
   sanitizer.enabled
     ? {
